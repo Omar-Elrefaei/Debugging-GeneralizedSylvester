@@ -1,0 +1,3 @@
+[deps]
+GeneralizedSylvesterSolver = "3b00829b-373b-4a35-afa6-09f888b04ecd"
+QuasiTriangular = "e29349eb-b3c8-4189-b6e7-6b7aca9b1830"
