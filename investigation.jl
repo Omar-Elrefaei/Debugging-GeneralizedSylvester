@@ -25,27 +25,93 @@ function test_repetedly(;func, seed=false, n_tries=20, verbose=true)
 end
 
 function scan_seeds(;func, seeds::UnitRange{Int64}, n_tries=1)
+	lk = ReentrantLock()
 	pass_fail_dict = Dict()
-	# Threads.@threads 
-	@showprogress for seed in seeds
-		res = test_repetedly(func=func, seed=seed, n_tries=n_tries, verbose=false)
-		pass_fail_dict[seed] = res
+	df = DataFrame()
+	df[!, :seed] .= 0
+	df[!, :OrigProb] .= false
+	df[!, :Ana] .= false
+	df[!, :Ana_opnorm] .= false
+	df[!, :res_mateq_vs_gss] .= false
+	df[!, :res_mateq_vs_ana] .= false
+	df[!, "norm(GSS-Ana)"] .= 0.0
+	# df[!, "opnorm(GSS-Ana)"] .= 0.0
+	df[!, "norm(GSS-OrigProb)"] .= 0.0
+	# df[!, "opnorm(GSS-OrigProb)"] .= 0.0
+	df[!, "norm(Ana-OrigProb)"] .= 0.0
+	# df[!, "opnorm(Ana-OrigProb)"] .= 0.0
+	df[!, "condNum_ana"] .= 0.0
+
+	prog = Progress(length(seeds))
+	Threads.@threads for seed in seeds
+		res = gss_test(seed)
+		lock(lk) do
+			push!(df, res)
+		end
+		next!(prog)
 	end
 
-	inconsistent_seeds = filter(p->ismissing(p.second), pass_fail_dict) |> sort 
-	passed_seeds = filter(p->isequal(true)(p.second), pass_fail_dict) |> sort
-	failed_seeds = filter(p->isequal(false)(p.second), pass_fail_dict) |> sort
-	# printing block
-	println("\nPassing seeds: $(length(passed_seeds))/$(length(seeds))")
-	0<length(passed_seeds)<15 ? println("  =>	", [p.first for p in passed_seeds]) : nothing
-	println("Failing seeds: $(length(failed_seeds))/$(length(seeds))")
-	0<length(failed_seeds)<15 ? println("  =>	", [p.first for p in failed_seeds]) : nothing
-	println("Inconsistent Seeds: $(length(inconsistent_seeds))/$(length(seeds))")
-	0<length(inconsistent_seeds)<15 ? println("  =>	", [p.first for p in inconsistent_seeds]) : nothing
-	if length(failed_seeds)+length(inconsistent_seeds) == 0 print("✨ Nice, no faliures or inconsistencies ✨") end
-	if length(passed_seeds) == length(seeds) println("✨ All $(length(seeds)) seeds Passed ✨") end
-	return passed_seeds
+	passed_seeds = subset(df, :OrigProb) 
+	failed_seeds = subset(df, :OrigProb=>x->x.==false)
+	println("\nPassing seeds: $(length(eachrow(passed_seeds)))/$(length(seeds))")
+	println("Failing seeds: $(length(eachrow(failed_seeds)))/$(length(seeds))")
+	0<length(eachrow(failed_seeds))<15 ? println("  =>	", failed_seeds.seed) : nothing
+	return df
 end	
+
+function gss_test(seed)
+	if seed != false Random.seed!(seed) end
+	n1 = 4
+	n2 = 4
+	order = 4
+	a = randn(Float64,n1,n1); b = randn(Float64,n1,n1); c = randn(Float64,n2,n2); d = randn(Float64,n1,n2^order)
+	ws = GeneralizedSylvesterWs(n1,n1,n2,order)
+	a_orig = copy(a); b_orig = copy(b); c_orig = copy(c); d_orig = copy(d)
+	d = generalized_sylvester_solver!(a, b, c, copy(d_orig), order, ws)
+	
+	_a = kron_power(c_orig, order)
+	lhs1 = b_orig*d*_a + a_orig * d 
+	res = lhs1 ≈ d_orig
+
+	A = (kron(I(n2^order),a_orig) + kron(kron_power(c_orig', order),b_orig))
+	b = vec(d_orig)
+	sol2 = reshape(A\b, n1,n2^order)
+	# sol2 = reshape( solve(LinearProblem(A, b)).u, n1,n2^order)
+	res2 = isapprox(d, sol2)
+	res3 = isapprox(d, sol2, norm=opnorm)
+	# A*_s ≈ b ? nothing : @show A*_s ≈ b
+
+	## subbing in the linAlg solution into the original problem
+	lhs2 = b_orig*d*_a + a_orig * sol2 
+	res3 = lhs2 ≈ d_orig
+
+	results = [res, res2, res3]
+	if res2 == false
+		# println("seed: $seed, res1 is $res, and res2 is $res2")
+		# @show lhs1, d_orig, lhs2, d, sol2
+		# if abs(cond(A)) > 1e6
+		# 	@show "false: cond number is $(cond(A))"
+		# end
+		# @printf "seed is %s:  " seed
+		@printf "norm(lhs1-d_orig) = %.1E %s"        norm(lhs1-d_orig) res
+		@printf "\t-  norm(d-sol2) = %.1E %s"        norm(d-sol2) res2
+		@printf "\t-  norm(lhs2-d_orig) = %.1E %s\n" norm(lhs2-d_orig) res3
+	end
+
+	d_mateq = gsylv(b_orig, kron_power(c_orig,order), a_orig, 1.0, d_orig)
+	res_mateq_vs_gss = isapprox(d, d_mateq)
+	res_mateq_vs_ana = isapprox(sol2, d_mateq)
+
+	# dict = Dict(:seed=>seed, :res1 => res, :res2=>res2)
+	dict = (seed, res, res2, res3, res_mateq_vs_gss, res_mateq_vs_ana,
+		norm(d-sol2),
+		norm(lhs1-d_orig),  
+		norm(lhs2-d_orig), 
+		cond(A))
+	# res3 is worst, and surprisingly not corolated with res2
+	return dict
+
+end
 
 function consistent_or_not(list::Vector{Bool})
 	if isempty(list) return nothing
@@ -54,75 +120,8 @@ function consistent_or_not(list::Vector{Bool})
 	else return missing end
 end
 
-
-
 ######### Wrapper functions to test and trigger faliure #########
 
-function gss_test(seed)
-	if seed != false Random.seed!(seed) end
-	n1 = 4
-	n2 = 4
-	order = 3
-
-
-	# n1 = 2
-	# n2 = 2
-	# order = 3
-	a = randn(n1,n1)
-	b = randn(n1,n1)
-	c = randn(n2,n2)
-	ws = GeneralizedSylvesterWs(n1,n1,n2,order)
-	d = randn(n1,n2^order)
-	a_orig = copy(a)
-	b_orig = copy(b)
-	c_orig = copy(c)
-	d_orig = copy(d)
-
-	# @show "chkpt1"
-	d = generalized_sylvester_solver!(a, b, c, copy(d_orig), order, ws)
-	# @show "chkpt2"
-	
-	_a = kron_power(c_orig, order)
-	# @show "chkpt2.5"
-	lhs1 = a_orig*d + b_orig*d*_a
-	# @show "chkpt3"
-	
-	rhs1 = d_orig
-
-	res = lhs1 ≈ rhs1
-
-	A = (kron(I(n2^order),a_orig) + kron(kron_power(c_orig', order),b_orig))
-	b = vec(d_orig)
-	sol2 = reshape(A\b, n1,n2^order)
-	res2 = d ≈ sol2
-	
-	# if seed == 74 || seed == 75
-	# if seed == 2 || seed == 3 || seed == 9 || seed == 62
-	if res2== false
-	# 	@info "result is $res"
-	# 	@show seed
-	# 	# @show a
-	# 	# @show b
-	# 	# @show c
-	# 	# @show d_orig
-	# 	# @show d
-		@show norm(lhs1-rhs1)
-	# 	@show norm(lhs1)
-	# 	@show norm(rhs1)
-	# 	@show cond(rhs1)
-	# 	@show cond(lhs1)
-	# 	println()
-	end
-	results = [res, res2]
-	if !all(results)
-		println("seed: $seed, res1 is $res, and res2 is $res2")
-	end
-
-
-	return res2
-
-
-end
 
 function linsolv_test(seed)
 	if seed != false Random.seed!(seed) end
