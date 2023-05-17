@@ -5,7 +5,7 @@ using KroneckerTools, QuasiTriangular, GeneralizedSylvesterSolver
 using MatrixEquations, DataFrames, DataStructures
 
 # Utilities for running long multi-threaded tests
-using ProgressMeter
+using ProgressMeter, Memoization, ThreadSafeDicts
 
 function test_repetedly(;func, seed=false, n_tries=20, verbose=true)
 	pass_fail_log::Vector{Bool} = []
@@ -113,12 +113,15 @@ function gss_test(seed)
 		Symbol("norm(matEq-GSS)") => norm(d-d_mateq),
 		Symbol("norm(matEq-Ana)") => norm(sol2-d_mateq),
 		Symbol("norm(matEq-OrigProb)") => norm(lhs3-d_orig),
-		Symbol("cond(Ana)") => cond(A),
-		Symbol("cond(b&d)") => cond(b)+cond(d_orig),
+		Symbol("cond(Ana)") => _cond(A),
+		Symbol("cond(b&d)") => _cond(b)+_cond(d_orig),
 		)
 
 	return dict
+end
 
+@memoize ThreadSafeDict function _cond(x)
+	return cond(x) 
 end
 
 function consistent_or_not(list::Vector{Bool})
