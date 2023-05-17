@@ -35,16 +35,24 @@ end
 function scan_seeds(;func, seeds::UnitRange{Int64}, n_tries=1)
 	lk = ReentrantLock()
 	df = DataFrame()
+	breakout = false
 
 	prog = Progress(length(seeds))
 	Threads.@threads for seed in seeds
-		res = gss_test(seed)
-		lock(lk) do
-			append!(df, res, cols=:union)
+		if breakout break end
+		try
+			res = gss_test(seed)
+			lock(lk) do
+				append!(df, res, cols=:union)
+			end
+			next!(prog)
+		catch err 
+			if err isa InterruptException breakout=true
+			else rethrow() end
 		end
-		next!(prog)
 	end
 
+	if breakout @error "\nInterruptException but returning nevertheless" end
 	passed_seeds = subset(df, :gss_vs_orgPrb) 
 	failed_seeds = subset(df, :gss_vs_orgPrb=>x->x.==false)
 	println("\nPassing seeds: $(length(eachrow(passed_seeds)))/$(length(seeds))")
