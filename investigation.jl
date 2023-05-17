@@ -1,4 +1,3 @@
-using Revise 
 using LinearAlgebra, Random
 
 using KroneckerTools, QuasiTriangular, GeneralizedSylvesterSolver
