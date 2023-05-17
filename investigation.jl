@@ -1,3 +1,11 @@
+using Revise 
+using LinearAlgebra, Random
+
+using KroneckerTools, QuasiTriangular, GeneralizedSylvesterSolver
+using MatrixEquations, DataFrames, DataStructures
+
+# Utilities for running long multi-threaded tests
+using ProgressMeter
 
 function test_repetedly(;func, seed=false, n_tries=20, verbose=true)
 	pass_fail_log::Vector{Bool} = []
@@ -26,7 +34,6 @@ end
 
 function scan_seeds(;func, seeds::UnitRange{Int64}, n_tries=1)
 	lk = ReentrantLock()
-	pass_fail_dict = Dict()
 	df = DataFrame()
 
 	prog = Progress(length(seeds))
@@ -58,8 +65,8 @@ function gss_test(seed)
 	a_orig = copy(a); b_orig = copy(b); c_orig = copy(c); d_orig = copy(d)
 	d = generalized_sylvester_solver!(a, b, c, copy(d_orig), order, ws)
 	
-	_a = kron_power(c_orig, order)
-	lhs1 = b_orig*d*_a + a_orig * d 
+	c_nKrons = kron_power(c_orig, order)
+	lhs1 = b_orig*d*c_nKrons + a_orig * d 
 	gss_vs_orgPrb = isapprox(lhs1, d_orig)
 	gss_vs_orgPrb_rtol = isapprox(lhs1, d_orig, rtol=rtol)
 
@@ -71,27 +78,15 @@ function gss_test(seed)
 	res4 = isapprox(d, sol2, rtol=rtol2)
 	# A*_s ≈ b ? nothing : @show A*_s ≈ b
 
-	## subbing in the linAlg solution into the original problem
-	lhs2 = b_orig*sol2*_a + a_orig * sol2 
+	# sub-back the analytical solution into the original problem
+	lhs2 = b_orig*sol2*c_nKrons + a_orig * sol2 
 	res_ana_vs_orgPrb = isapprox(lhs2, d_orig)
-
-	if res2 == false
-		# println("seed: $seed, res1 is $res, and res2 is $res2")
-		# @show lhs1, d_orig, lhs2, d, sol2
-		# if abs(cond(A)) > 1e6
-		# 	@show "false: cond number is $(cond(A))"
-		# end
-		# @printf "seed is %s:  " seed
-		@printf "norm(lhs1-d_orig) = %.1E %s"        norm(lhs1-d_orig) res
-		@printf "\t-  norm(d-sol2) = %.1E %s"        norm(d-sol2) res2
-		@printf "\t-  norm(lhs2-d_orig) = %.1E %s\n" norm(lhs2-d_orig) res3
-	end
 
 	d_mateq = gsylv(b_orig, kron_power(c_orig,order), a_orig, 1.0, d_orig)
 	res_mateq_vs_gss = isapprox(d, d_mateq)
 	res_mateq_vs_ana = isapprox(sol2, d_mateq)
 	
-	lhs3 = b_orig*d_mateq*_a + a_orig * d_mateq 
+	lhs3 = b_orig*d_mateq*c_nKrons + a_orig * d_mateq 
 	res_matEq_vs_orgPrb = isapprox(lhs3, d_orig)
 	dict = OrderedDict(
 		:seed => seed,
@@ -114,7 +109,6 @@ function gss_test(seed)
 		Symbol("cond(b&d)") => cond(b)+cond(d_orig),
 		)
 
-	# res3 is worst, and surprisingly not corolated with res2
 	return dict
 
 end
