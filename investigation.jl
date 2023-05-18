@@ -31,6 +31,7 @@ function scan_seeds(;func, seeds::UnitRange{Int64})
 end	
 
 function gss_test(seed)
+	Random.seed!(seed)
 	n1 = 4
 	n2 = 4
 	order = 3
